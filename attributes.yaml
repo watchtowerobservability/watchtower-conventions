@@ -1,0 +1,75 @@
+# Watchtower semantic conventions. Layered on OpenTelemetry semconv: where OTel defines an
+# attribute we use it unchanged and only list it here as `uses:`. Source of truth for conventions.md.
+# stability: stable | development. scope: resource | span | log | event | batch.
+namespace:
+  prefix: wt.
+  rule: >-
+    wt.* is reserved. Tenant identity comes only from the authenticated key, so the gateway deletes
+    every incoming wt.* attribute before stamping its own. SDKs may emit only the wt.sdk.*,
+    wt.sample_rate, wt.session, wt.replay.*, wt.rum.* and wt.prompt.* names listed below; any other
+    wt.* name sent by a client is dropped.
+groups:
+  - id: resource
+    title: Resource and release
+    scope: resource
+    uses: [service.name, service.version, deployment.environment.name]
+    attributes:
+      - {name: wt.sample_rate, type: double, stability: stable, scope: batch,
+         desc: "Effective client sampling rate (0..1] of the batch, used to scale counts."}
+      - {name: wt.sdk.dropped, type: int, stability: stable, scope: batch,
+         desc: "Events the SDK queue dropped (oldest first) since the last successful flush."}
+      - {name: wt.sdk.rejected, type: int, stability: stable, scope: batch,
+         desc: "Events the SDK discarded because the gateway rejected them (4xx)."}
+      - {name: wt.sdk.profiling, type: boolean, stability: development, scope: resource,
+         desc: "True when the SDK was started with profiling enabled."}
+    notes: "Release is `service.version`; environment is `deployment.environment.name`. Set from WT_RELEASE and WT_ENVIRONMENT."
+  - id: error
+    title: Errors
+    scope: log
+    uses: [exception.type, exception.message, exception.stacktrace, trace_id, span_id]
+    attributes:
+      - {name: wt.fingerprint, type: string, stability: stable, scope: event,
+         desc: "Optional client grouping override. Same value, same issue. Server computes one when absent."}
+      - {name: wt.error.handled, type: boolean, stability: stable, scope: event,
+         desc: "False for uncaught exceptions and panics, true for explicit capture calls."}
+    notes: "An error is a log record or span event carrying exception.*; its trace_id and span_id link it to the trace."
+  - id: session
+    title: Sessions and replay
+    scope: event
+    uses: [session.id, browser.user_agent, browser.language, browser.mobile]
+    attributes:
+      - {name: wt.session, type: string, stability: stable, scope: event,
+         desc: "Opaque session id (UUIDv4). Equals session.id for browser and mobile SDKs."}
+      - {name: wt.rum.session, type: string, stability: stable, scope: event,
+         desc: "Session id on RUM events, used to join errors, traces and replay."}
+      - {name: wt.has_replay, type: boolean, stability: stable, scope: event,
+         desc: "Set by the server on sessions that have a stored replay. Not client-writable."}
+      - {name: wt.replay.paused, type: boolean, stability: stable, scope: event,
+         desc: "Replay recording paused (consent, privacy mode, offline)."}
+      - {name: wt.replay.dropped, type: int, stability: stable, scope: event,
+         desc: "Replay segments dropped under queue pressure."}
+    notes: "User ids are hashed client-side with SHA-256 and the project salt; raw ids never leave the device."
+  - id: llm
+    title: LLM calls and prompts
+    scope: span
+    uses: [gen_ai.system, gen_ai.request.model, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens]
+    attributes:
+      - {name: wt.prompt.name, type: string, stability: stable, scope: span,
+         desc: "Name of the managed prompt fetched with get_prompt/getPrompt."}
+      - {name: wt.prompt.version, type: int, stability: stable, scope: span,
+         desc: "Version of the managed prompt used for this call."}
+      - {name: wt.score.name, type: string, stability: development, scope: event,
+         desc: "Name of an evaluation score attached to the trace."}
+      - {name: wt.score.value, type: double, stability: development, scope: event,
+         desc: "Numeric score value."}
+  - id: server_stamped
+    title: Server-stamped (read only)
+    scope: resource
+    desc: "Set by the gateway after authentication. Clients must never send these; they are deleted on arrival."
+    attributes:
+      - {name: wt.tenant, type: string, stability: stable, scope: resource, desc: "Tenant id from the key."}
+      - {name: wt.project_id, type: string, stability: stable, scope: resource, desc: "Project id from the key."}
+      - {name: wt.env_id, type: string, stability: stable, scope: resource, desc: "Environment id from the key."}
+      - {name: wt.source, type: string, stability: stable, scope: resource, desc: "Ingest path: otlp, rum, sdk."}
+      - {name: wt.truncated, type: boolean, stability: stable, scope: event, desc: "A value was cut to the size cap."}
+      - {name: wt.timestamp_adjusted, type: boolean, stability: stable, scope: event, desc: "Client clock skew corrected."}
